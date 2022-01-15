@@ -4,6 +4,7 @@ from skimage import color
 import torch
 import torch.nn.functional as F
 from IPython import embed
+from zmq import device
 
 def load_img(img_path):
 	out_np = np.asarray(Image.open(img_path))
@@ -46,3 +47,24 @@ def postprocess_tens(tens_orig_l, out_ab, mode='bilinear'):
 
 	out_lab_orig = torch.cat((tens_orig_l, out_ab_orig), dim=1)
 	return color.lab2rgb(out_lab_orig.data.cpu().numpy()[0,...].transpose((1,2,0)))
+
+def rgb2yuv_601(rgb):
+	mat = torch.tensor([[0.299, -0.14714119, 0.61497538],
+						[0.587, -0.28886916, -0.51496512],
+						[0.114, 0.43601035, -0.10001026]], device=rgb.device)
+	rgb_ = rgb.transpose(1, 3)
+	yuv = torch.tensordot(rgb_, mat, dims=1).transpose(1, 3)
+	return yuv
+
+def yuv2rgb_601(y, uv):
+	mat = torch.tensor([[1, 1, 1],
+						[0, -0.39465, 2.03211],
+						[1.13983, -0.58060, 0]], device=y.device)
+	yuv = torch.cat([y, uv], dim=1).transpose(1, 3)
+	rgb = torch.tensordot(yuv, mat, dims=1).transpose(1, 3)
+	return rgb
+
+if __name__ == '__main__':
+	mat = torch.rand(2,3,2,2)
+	yuv = rgb2yuv_601(mat)[:, 0:1].repeat(1, 3, 1, 1)
+	print(mat, yuv)

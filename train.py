@@ -2,15 +2,21 @@ import time
 import argparse
 
 from torch import utils
-from datasets import imgDataset
+from datasets.yuvdatasets import yuvdatasets
 
 import torch
 import torch.nn as nn
 import torch.functional as F
 import torchvision
 import torchvision.transforms as transforms
-from models import ECCV6
-from util import processdata
+from torch.utils.data import DataLoader
+from torchvision.utils import make_grid
+from models.Decoder import Decoder
+from models.Encoder import Encoder
+from utils import processdata
+import os
+from utils import processdata
+from torch.utils.tensorboard import SummaryWriter
 import tensorboard
 
 
@@ -29,7 +35,7 @@ def parse_args():
     parser.add_argument("-c",
                         "--checkpoint_location",
                         type=str,
-                        required=True,
+                        default="./checkpoints",
                         help="Place to save checkpoints")
     parser.add_argument("-e",
                         "--epoch",
@@ -39,7 +45,7 @@ def parse_args():
     parser.add_argument("-b",
                         "--batch_size",
                         type=int,
-                        default=20,
+                        default=24,
                         help="batch size")
     parser.add_argument("-w",
                         "--num_workers",
@@ -58,33 +64,61 @@ def parse_args():
     parser.add_argument("-i",
                         "--checkpoint_every",
                         type=int,
-                        default=100,
+                        default=500,
                         help="Save checkpoint every k iteration (checkpoints for same epoch will overwrite)")
+    parser.add_argument("-log",
+                        "--log_every",
+                        type=int,
+                        default=50,
+                        help="show the image every k iteration")
     args = parser.parse_args()
     return args
 
 
 if __name__ == '__main__':
     opt = parse_args()
-    dataset = imgDataset(opt.training_dir)
-    dataset_loader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size, shuffle=True, num_workers=int(opt.num_workers))
+    device = torch.device("cuda")
+    dataset = yuvdatasets(cont_img_path=opt.training_dir, style_img_path=opt.training_dir, img_size=256)
+    dataset_loader = DataLoader(dataset, batch_size=opt.batch_size, shuffle=True, num_workers=int(opt.num_workers), drop_last=True)
 
     dataset_size = len(dataset)
     print('#training images = %d' % dataset_size)
 
-    model = ECCV6.eccv16()
-    model = model.cuda()
-    model.train()
+    encoder_backbone = torchvision.models.mobilenet_v3_large(pretrained=True).to(device)
+    encoder = Encoder(encoder_backbone, net_type="mobilenetv3").to(device)
+    encoder.eval()
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.5, 0.999))
-    loss_fuction = nn.MSELoss()
+    decoder = Decoder()
+    decoder = decoder.to(device)
+    decoder.train()
 
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=opt.lr, betas=(0.5, 0.999))
+    writer = SummaryWriter()
+    batch_done = 0
     for epoch in range(opt.epoch):
         # for i, data in enumerate(dataset):
-        for i, (tens_orig, tens_rs_l, tens_rs_ab) in enumerate(dataset_loader):
+        for i, (rgb) in enumerate(dataset_loader):
+            rgb = rgb.to(device)
+            yuv = processdata.rgb2yuv_601(rgb)
             optimizer.zero_grad()
-            tens_rs = tens_rs.cuda()
-            output = model(tens_rs_l)
-            loss = loss_fuction(tens_rs_ab, output)
+            gray = yuv[:, 0:1].repeat(1, 3, 1, 1)
+            encoder_output = encoder.encode_with_intermediate(gray)
+            output = decoder(encoder_output[-1], encoder_output[-2], encoder_output[-3], encoder_output[-4], encoder_output[-5])
+            output_rgb = processdata.yuv2rgb_601(yuv[:, 0:1], output)
+            loss = encoder.content_loss(rgb, output_rgb)
             loss.backward()
+            writer.add_scalar("loss", loss.item(), batch_done)
+            batch_done += 1
+            if batch_done % opt.log_every == 0:
+                gray = make_grid(gray, nrow=opt.batch_size, normalize=False)
+                color = make_grid(rgb, nrow=opt.batch_size, normalize=False)
+                out = make_grid(output_rgb, nrow=opt.batch_size, normalize=False)
+
+                image_grid = torch.cat((gray, color, out), 1)
+                writer.add_image("log_picture", image_grid, batch_done)
+            
+            if batch_done % opt.checkpoint_every == 0:
+                ckpt_model_filename = "ckpt_" + str(epoch) + '_' + str(batch_done) + ".pth"
+                ckpt_model_path = os.path.join(opt.checkpoint_location, ckpt_model_filename)
+                torch.save(decoder.state_dict(), ckpt_model_path)
             optimizer.step()
