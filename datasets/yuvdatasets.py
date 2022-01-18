@@ -14,6 +14,7 @@ class yuvdatasets(Dataset):
         self.style_img_files = self.list_files(self.style_img_path)
         self.transform = transforms.Compose([
             transforms.Resize((self.img_size,self.img_size), Image.BICUBIC),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor()
         ])
     

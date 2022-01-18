@@ -2,3 +2,6 @@ checkpoints/*
 runs/*
 .vscode/*
 *__pycache__*
+checkpoints*
+val2017*
+nohup.out

@@ -49,22 +49,45 @@ def postprocess_tens(tens_orig_l, out_ab, mode='bilinear'):
 	return color.lab2rgb(out_lab_orig.data.cpu().numpy()[0,...].transpose((1,2,0)))
 
 def rgb2yuv_601(rgb):
-	mat = torch.tensor([[0.299, -0.14714119, 0.61497538],
-						[0.587, -0.28886916, -0.51496512],
-						[0.114, 0.43601035, -0.10001026]], device=rgb.device)
+	mat = torch.tensor([[0.299, -0.1687, 0.5],
+						[0.587, -0.3313, -0.4187],
+						[0.114, 0.5, -0.0813]], device=rgb.device)
 	rgb_ = rgb.transpose(1, 3)
 	yuv = torch.tensordot(rgb_, mat, dims=1).transpose(1, 3)
 	return yuv
 
 def yuv2rgb_601(y, uv):
 	mat = torch.tensor([[1, 1, 1],
-						[0, -0.39465, 2.03211],
-						[1.13983, -0.58060, 0]], device=y.device)
+						[0, -0.344, 1.772],
+						[1.402, -0.714, 0]], device=y.device)
 	yuv = torch.cat([y, uv], dim=1).transpose(1, 3)
-	rgb = torch.tensordot(yuv, mat, dims=1).transpose(1, 3)
+	rgb = torch.tensordot(yuv, mat, dims=1).transpose(1, 3).clamp_(0, 1)
 	return rgb
+
+def adaptive_instance_normalization(content_feat, style_feat, alpha=1):
+    assert (content_feat.size()[:2] == style_feat.size()[:2])
+    size = content_feat.size()
+    style_mean, style_std = calc_mean_std(style_feat)
+    content_mean, content_std = calc_mean_std(content_feat)
+
+    normalized_feat = (content_feat - content_mean.expand(
+        size)) / content_std.expand(size)
+    learn_feat = normalized_feat * style_std.expand(size) + style_mean.expand(size)
+    output_feat = alpha * learn_feat + (1-alpha)*content_feat
+    return output_feat
+
+def calc_mean_std(feat, eps=1e-5):
+    # eps is a small value added to the variance to avoid divide-by-zero.
+    size = feat.size()
+    assert (len(size) == 4)
+    N, C = size[:2]
+    feat_var = feat.view(N, C, -1).var(dim=2) + eps
+    feat_std = feat_var.sqrt().view(N, C, 1, 1)
+    feat_mean = feat.view(N, C, -1).mean(dim=2).view(N, C, 1, 1)
+    return feat_mean, feat_std
 
 if __name__ == '__main__':
 	mat = torch.rand(2,3,2,2)
-	yuv = rgb2yuv_601(mat)[:, 0:1].repeat(1, 3, 1, 1)
-	print(mat, yuv)
+	yuv = rgb2yuv_601(mat)
+	rgb = yuv2rgb_601(yuv[:, 0:1, :, :], yuv[:, 1:3, :, :])
+	print(mat, rgb, yuv)

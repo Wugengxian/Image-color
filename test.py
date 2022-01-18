@@ -115,7 +115,7 @@ if __name__ == '__main__':
         D = NLayerDiscriminator(3).to(device)
         optimizer_D = torch.optim.Adam(D.parameters(), lr=opt.lr, betas=(0.5, 0.999))
         loss_GAN = GANLoss(gan_mode='lsgan').to(device)
-        D.train()
+        D.eval()
 
     if opt.gan_g:
         decoder = UnetGenerator(1, 2, 8)
@@ -124,9 +124,8 @@ if __name__ == '__main__':
     decoder = decoder.to(device)
     if opt.state_dict is not None:
         decoder.load_state_dict(torch.load(opt.state_dict))
-    decoder.train()
+    decoder.eval()
 
-    optimizer = torch.optim.Adam(decoder.parameters(), lr=opt.lr, betas=(0.5, 0.999))
 
     writer = SummaryWriter()
     batch_done = 0
@@ -151,63 +150,43 @@ if __name__ == '__main__':
             if opt.preference:
                 if opt.gan:
                     #this is for Discriminator
-                    D.requires_grad(True)
                     optimizer_D.zero_grad()
                     pred_fake = loss_GAN(D(torch.cat([gray, output], dim=1).detach()), False)
                     pred_true = loss_GAN(D(torch.cat([gray, yuv[:, 1:]], dim=1)), True)
                     loss_D = (pred_fake + pred_true) / 2
-                    loss_D.backward()
-                    optimizer_D.step()
 
                     #this is for generater
                     D.requires_grad(False)
-                    optimizer.zero_grad()
                     loss_c, loss_s = encoder.loss(output_rgb, content = rgb, style_feat=style_feat)
                     loss_g = loss_grad(output_rgb, rgb)
                     loss_gan = loss_GAN(D(torch.cat([gray, output], dim=1)), True)
                     loss = loss_gan + 0.05 * loss_c + 0.05 * loss_s + 0.5 * loss_g
-                    loss.backward()
-                    optimizer.step()
 
                     writer.add_scalars("loss_G", {"loss_s":loss_s.item(),"loss_c":loss_c.item(), "loss_g": loss_g.item(), 
                                         "loss_G_true": loss_gan.item(), "loss_G": loss.item()}, batch_done)
                     writer.add_scalars("loss_D", {"pred_fake": pred_fake.item(), "pred_true": pred_true.item(), "loss_D": loss_D.item()}, batch_done)
                 else:
-                    optimizer.zero_grad()
                     loss_c, loss_s = encoder.loss(output_rgb, content = rgb, style_feat=style_feat)
                     loss_g = loss_grad(output_rgb, rgb)
                     loss = 1 * loss_c + 1 * loss_s + 10 * loss_g
-                    loss.backward()
-                    optimizer.step()
                     writer.add_scalars("loss", {"loss_s":loss_s.item(),"loss_c":loss_c.item(),"loss_g": loss_g.item(),"total_loss":loss.item()}, batch_done)
             else:
                 if opt.gan_g:
 
-                    D.requires_grad(True)
-                    optimizer_D.zero_grad()
                     pred_fake = loss_GAN(D(torch.cat([gray, output], dim=1).detach()), False)
                     pred_true = loss_GAN(D(torch.cat([gray, yuv[:, 1:]], dim=1)), True)
                     loss_D = (pred_fake + pred_true) / 2
-                    loss_D.backward()
-                    optimizer_D.step()
 
-                    D.requires_grad(False)
-                    optimizer.zero_grad()
                     loss_c = loss_l1(output_rgb, rgb)
                     loss_g = loss_grad(output_rgb, rgb)
                     loss_gan = loss_GAN(D(torch.cat([gray, output], dim=1)), True)
                     loss = loss_gan + 2 * loss_c + 5 * loss_g
-                    loss.backward()
-                    optimizer.step()
 
                     writer.add_scalars("loss_G", {"loss_c":loss_c.item(), "loss_g": loss_g.item(), 
                                         "loss_G_true": loss_gan.item(), "loss_G": loss.item()}, batch_done)
                     writer.add_scalars("loss_D", {"pred_fake": pred_fake.item(), "pred_true": pred_true.item(), "loss_D": loss_D.item()}, batch_done)
                 else:
-                    optimizer.zero_grad()
-                    loss = encoder.content_loss(rgb, output_rgb, loss_type=opt.loss_type)
-                    loss.backward()
-                    optimizer.step()
+                    loss = encoder.content_loss(rgb, output_rgb, loss_type=opt.loss_type)s
                     writer.add_scalar("loss", loss.item(), batch_done)
             batch_done += 1
 
