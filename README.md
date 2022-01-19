@@ -1,4 +1,4 @@
-# 图像上色
+# Image Colorization of pix2pix with referenced graph
 
 ### 1. train.py and test.py
 Use this to train the modified network.
